@@ -20,6 +20,8 @@ import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.formatter.ValueFormatter
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.regex.Pattern
 
 class MainActivity : AppCompatActivity() {
@@ -37,18 +39,64 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
-        viewModel = ViewModelProvider(this)[CounterViewModel::class.java]
-        voiceRecognizer = VoiceRecognizerManager(this)
+        // 检查上次崩溃，提示用户
+        checkLastCrash()
 
-        setupChart()
-        setupObservers()
-        setupClickListeners()
-        setupVoiceListeners()
-        loadSavedValues()
-        checkVoiceModel()
+        try {
+            binding = ActivityMainBinding.inflate(layoutInflater)
+            setContentView(binding.root)
+
+            viewModel = ViewModelProvider(this)[CounterViewModel::class.java]
+            voiceRecognizer = VoiceRecognizerManager(this)
+
+            setupChart()
+            setupObservers()
+            setupClickListeners()
+            setupVoiceListeners()
+            loadSavedValues()
+            // 延迟检查语音模型，避免阻塞启动
+            binding.root.postDelayed({
+                checkVoiceModel()
+            }, 500)
+        } catch (e: Exception) {
+            // 启动兜底：即使语音模块有问题也能正常显示主界面
+            e.printStackTrace()
+            Toast.makeText(this, "初始化异常: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun checkLastCrash() {
+        try {
+            val crashMsg = CastingCounterApp.checkLastCrash(this)
+            if (!crashMsg.isNullOrEmpty()) {
+                CastingCounterApp.clearCrashLog(this)
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("检测到上次异常退出")
+                    .setMessage("错误信息: $crashMsg\n\n如果是语音模型问题，将自动清理损坏的模型文件，您可以重新下载。")
+                    .setPositiveButton("知道了") { _, _ ->
+                        // 清理可能损坏的模型
+                        lifecycleScope.launch {
+                            try {
+                                // 尝试检测并清理损坏的模型
+                                val prefs = getSharedPreferences("voice_model", MODE_PRIVATE)
+                                if (prefs.getBoolean("model_corrupted", false)) {
+                                    val modelDir = File(filesDir, "vosk-model-small-cn-0.22")
+                                    if (modelDir.exists()) {
+                                        modelDir.deleteRecursively()
+                                    }
+                                    prefs.edit().clear().apply()
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+                    .show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun setupChart() {
@@ -181,10 +229,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkVoiceModel() {
         lifecycleScope.launch {
-            val ready = voiceRecognizer.loadModel()
-            if (!ready) {
+            try {
+                // 先检查模型文件是否存在
+                val modelExists = voiceRecognizer.checkModelExists()
+                if (!modelExists) {
+                    binding.layoutVoiceModelDownload.visibility = View.VISIBLE
+                    binding.btnVoiceInput.isEnabled = false
+                    return@launch
+                }
+
+                // 尝试加载模型
+                val ready = voiceRecognizer.loadModel()
+                if (ready) {
+                    binding.layoutVoiceModelDownload.visibility = View.GONE
+                    binding.btnVoiceInput.isEnabled = true
+                } else {
+                    // 加载失败，显示下载界面
+                    binding.layoutVoiceModelDownload.visibility = View.VISIBLE
+                    binding.btnVoiceInput.isEnabled = false
+                    // 标记模型可能损坏，下次启动时清理
+                    val prefs = getSharedPreferences("voice_model", MODE_PRIVATE)
+                    prefs.edit().putBoolean("model_corrupted", true).apply()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // 即使语音模块加载失败，也不影响主功能使用
                 binding.layoutVoiceModelDownload.visibility = View.VISIBLE
                 binding.btnVoiceInput.isEnabled = false
+                Toast.makeText(this@MainActivity,
+                    "语音模块加载失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -314,12 +387,25 @@ class MainActivity : AppCompatActivity() {
 
         // 下载语音模型
         binding.btnDownloadModel.setOnClickListener {
+            binding.btnDownloadModel.isEnabled = false
+            binding.tvModelStatus.text = getString(R.string.voice_model_downloading, 0)
             lifecycleScope.launch {
                 val success = voiceRecognizer.downloadModel()
-                if (success) {
-                    Toast.makeText(this@MainActivity, "语音模型下载完成", Toast.LENGTH_SHORT).show()
-                    binding.layoutVoiceModelDownload.visibility = View.GONE
-                    binding.btnVoiceInput.isEnabled = true
+                withContext(Dispatchers.Main) {
+                    binding.btnDownloadModel.isEnabled = true
+                    if (success) {
+                        Toast.makeText(this@MainActivity, "语音模型下载完成", Toast.LENGTH_SHORT).show()
+                        binding.layoutVoiceModelDownload.visibility = View.GONE
+                        binding.btnVoiceInput.isEnabled = true
+                        // 清除损坏标记
+                        val prefs = getSharedPreferences("voice_model", MODE_PRIVATE)
+                        prefs.edit().clear().apply()
+                    } else {
+                        val error = voiceRecognizer.state.value.error
+                        Toast.makeText(this@MainActivity,
+                            "下载失败: ${error ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                        binding.tvModelStatus.text = "下载失败，点击重试"
+                    }
                 }
             }
         }
