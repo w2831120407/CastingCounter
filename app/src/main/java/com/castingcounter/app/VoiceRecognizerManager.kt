@@ -363,17 +363,6 @@ class VoiceRecognizerManager(private val context: Context) {
             }
         }
     }
-            } catch (e: Exception) {
-                Log.e(TAG, "downloadModel error", e)
-                clearCorruptedModel()
-                _state.value = _state.value.copy(
-                    isModelDownloading = false,
-                    error = "下载失败: ${e.message ?: "未知错误"}"
-                )
-                false
-            }
-        }
-    }
 
     private fun unzip(zipFile: File, targetDir: File) {
         ZipInputStream(zipFile.inputStream()).use { zis ->
