@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">铸件计数器</string>
+    <string name="daily_task">今日任务</string>
+    <string name="pieces_per_box">每箱装件数</string>
+    <string name="total_boxes">共需装箱数</string>
+    <string name="box_calculation_result">每箱装%1$d件，共需装%2$d箱</string>
+    <string name="completed_pieces">已完成件数</string>
+    <string name="add_pieces">添加件数</string>
+    <string name="add_5">+5</string>
+    <string name="add_10">+10</string>
+    <string name="add_custom">添加</string>
+    <string name="voice_input">语音添加</string>
+    <string name="work_start_time">上班时间</string>
+    <string name="work_end_time">下班时间</string>
+    <string name="hour">时</string>
+    <string name="minute">分</string>
+    <string name="next_day">+1天</string>
+    <string name="efficiency">每小时产量</string>
+    <string name="efficiency_value">%1$.1f 件/小时</string>
+    <string name="estimated_completion">预计完成时间</string>
+    <string name="estimated_duration">预计总耗时</string>
+    <string name="chart_title">产量趋势图</string>
+    <string name="calculate">计算装箱</string>
+    <string name="save_settings">保存设置</string>
+    <string name="please_enter_task">请输入今日任务数量</string>
+    <string name="please_enter_pieces_per_box">请输入每箱装件数</string>
+    <string name="pieces_unit">件</string>
+    <string name="box_unit">箱</string>
+    <string name="voice_hint">说出\"加XX件\"或\"加XX\"来添加</string>
+    <string name="listening">正在聆听...</string>
+    <string name="voice_not_supported">设备不支持语音识别</string>
+    <string name="permission_denied">请先授予录音权限</string>
+    <string name="progress">进度</string>
+    <string name="progress_value">%1$d / %2$d 件 (%3$.1f%%)</string>
+    <string name="reset">重置今日数据</string>
+    <string name="confirm_reset">确定要重置今日数据吗？</string>
+</resources>
