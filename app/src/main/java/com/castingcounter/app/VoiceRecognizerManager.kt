@@ -35,23 +35,28 @@ class VoiceRecognizerManager(private val context: Context) {
         private const val TAG = "VoiceRecognizerManager"
         private const val MODEL_DIR_NAME = "vosk-model-small-cn-0.22"
         private const val MODEL_ZIP_NAME = "vosk-model-small-cn-0.22.zip"
-        private const val MODEL_DOWNLOAD_URL = "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
-        // 模型必需文件列表，用于校验模型完整性
+        // 多个下载源，按优先级尝试
+        private val MODEL_DOWNLOAD_URLS = listOf(
+            "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip",
+            "https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-model-small-cn-0.22.zip"
+        )
+        // 模型必需的核心文件/目录（小模型结构）
+        private val REQUIRED_ITEMS = listOf(
+            "am",
+            "conf",
+            "graph",
+            "ivector",
+            "words.txt",
+            "final.mdl"
+        )
+        // 核心文件（非目录）
         private val REQUIRED_FILES = listOf(
             "am/final.mdl",
-            "am/global_cmvn.stats",
-            "conf/model.conf",
             "conf/mfcc.conf",
-            "ivector/final.dubm",
-            "ivector/final.ie",
-            "ivector/final.mat",
-            "ivector/global_cmvn.stats",
-            "ivector/splice.conf",
-            "ivector/splice_opts",
             "graph/HCLr.fst",
             "graph/Gr.fst",
-            "graph/phones",
-            "graph/words.txt"
+            "ivector/final.mat",
+            "words.txt"
         )
     }
 
@@ -101,28 +106,57 @@ class VoiceRecognizerManager(private val context: Context) {
 
     private fun verifyModelIntegrity(): Boolean {
         return try {
-            for (relativePath in REQUIRED_FILES) {
-                val file = File(modelDir, relativePath)
-                if (!file.exists() || file.length() == 0L) {
-                    Log.w(TAG, "Model file missing or empty: $relativePath")
-                    return false
+            // 宽松校验：只检查核心目录是否存在
+            var dirCount = 0
+            for (item in REQUIRED_ITEMS) {
+                val file = File(modelDir, item)
+                if (file.exists()) {
+                    dirCount++
                 }
             }
-            true
+            // 至少要有一半以上的必需项存在
+            val valid = dirCount >= REQUIRED_ITEMS.size / 2
+            if (!valid) {
+                Log.w(TAG, "模型完整性校验失败: $dirCount/${REQUIRED_ITEMS.size} 项存在")
+                // 打印目录结构用于调试
+                logModelDirStructure()
+            }
+            valid
         } catch (e: Exception) {
             Log.e(TAG, "verifyModelIntegrity error", e)
             false
         }
     }
 
+    private fun logModelDirStructure() {
+        try {
+            Log.d(TAG, "模型目录结构:")
+            modelDir.listFiles()?.forEach { file ->
+                Log.d(TAG, "  ${file.name} (${if (file.isDirectory) "dir" else "file: ${file.length()} bytes"})")
+                if (file.isDirectory) {
+                    file.listFiles()?.forEach { subFile ->
+                        Log.d(TAG, "    ${subFile.name} (${if (subFile.isDirectory) "dir" else "${subFile.length()} bytes"})")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "logModelDirStructure error", e)
+        }
+    }
+
     suspend fun loadModel(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                // 先检查模型是否存在且完整
-                if (!checkModelExists()) {
-                    Log.w(TAG, "Model not found or corrupted")
-                    clearCorruptedModel()
+                // 先检查模型是否存在
+                if (!modelDir.exists() || !modelDir.isDirectory) {
+                    Log.w(TAG, "模型目录不存在")
                     return@withContext false
+                }
+
+                // 检查完整性（宽松校验，仅作参考）
+                val integrityOk = verifyModelIntegrity()
+                if (!integrityOk) {
+                    Log.w(TAG, "模型完整性校验未通过，但仍尝试加载")
                 }
 
                 // 尝试加载模型，最多重试2次
@@ -131,13 +165,12 @@ class VoiceRecognizerManager(private val context: Context) {
                     try {
                         Log.d(TAG, "Loading model attempt $attempt...")
                         model = Model(modelDir.absolutePath)
-                        _state.value = _state.value.copy(isModelReady = true, error = null)
+                        _state.value = _state.value.copy(isModelReady = true, error = null, modelExists = true)
                         Log.d(TAG, "Model loaded successfully")
                         return@withContext true
                     } catch (e: Exception) {
                         lastError = e
                         Log.e(TAG, "Model load attempt $attempt failed", e)
-                        // 第一次失败后清理并重试
                         if (attempt == 1) {
                             model = null
                             System.gc()
@@ -146,7 +179,7 @@ class VoiceRecognizerManager(private val context: Context) {
                     }
                 }
 
-                // 加载失败，可能模型损坏
+                // 加载失败，清理损坏模型
                 clearCorruptedModel()
                 _state.value = _state.value.copy(
                     error = "模型加载失败: ${lastError?.message}",
@@ -191,72 +224,145 @@ class VoiceRecognizerManager(private val context: Context) {
                 // 先清理旧的损坏文件
                 clearCorruptedModel()
 
-                // 下载模型zip
-                Log.d(TAG, "Downloading model from $MODEL_DOWNLOAD_URL")
-                val url = URL(MODEL_DOWNLOAD_URL)
-                val connection = url.openConnection()
-                connection.connectTimeout = 30000
-                connection.readTimeout = 60000
-                connection.connect()
-                val fileLength = connection.contentLength
-                Log.d(TAG, "Model size: $fileLength bytes")
-
-                if (fileLength <= 0) {
-                    throw Exception("无法获取模型文件大小")
-                }
-
-                val input = connection.getInputStream()
-                val output = FileOutputStream(modelZipFile)
-
-                val data = ByteArray(8192)
-                var total: Long = 0
-                var count: Int
-                var lastProgress = -1
-
-                while (input.read(data).also { count = it } != -1) {
-                    total += count.toLong()
-                    output.write(data, 0, count)
-                    val progress = ((total * 100) / fileLength).toInt()
-                    if (progress != lastProgress) {
-                        lastProgress = progress
-                        _state.value = _state.value.copy(downloadProgress = progress)
+                var lastError: Exception? = null
+                // 尝试多个下载源
+                for ((index, downloadUrl) in MODEL_DOWNLOAD_URLS.withIndex()) {
+                    try {
+                        Log.d(TAG, "尝试下载源 ${index + 1}/${MODEL_DOWNLOAD_URLS.size}: $downloadUrl")
+                        val success = downloadAndExtractModel(downloadUrl)
+                        if (success) {
+                            return@withContext true
+                        }
+                    } catch (e: Exception) {
+                        lastError = e
+                        Log.w(TAG, "下载源 ${index + 1} 失败: ${e.message}")
+                        // 继续尝试下一个源
                     }
                 }
 
-                output.flush()
-                output.close()
-                input.close()
-
-                Log.d(TAG, "Download complete, total: $total bytes")
-
-                // 验证下载文件大小
-                if (total < fileLength) {
-                    throw Exception("下载不完整: $total / $fileLength 字节")
-                }
-
-                // 解压
-                Log.d(TAG, "Extracting model...")
-                unzip(modelZipFile, context.filesDir)
-
-                // 删除zip文件
-                modelZipFile.delete()
-
-                // 验证解压后的模型完整性
-                if (!verifyModelIntegrity()) {
-                    throw Exception("模型文件不完整")
-                }
-
-                // 加载模型
-                Log.d(TAG, "Loading model...")
-                model = Model(modelDir.absolutePath)
+                // 所有源都失败了
+                throw lastError ?: Exception("所有下载源均失败")
+            } catch (e: Exception) {
+                Log.e(TAG, "downloadModel error", e)
+                clearCorruptedModel()
                 _state.value = _state.value.copy(
-                    isModelReady = true,
                     isModelDownloading = false,
-                    modelExists = true,
-                    error = null
+                    error = "下载失败: ${e.message ?: "未知错误"}"
                 )
-                Log.d(TAG, "Model ready!")
-                true
+                false
+            }
+        }
+    }
+
+    private suspend fun downloadAndExtractModel(downloadUrl: String): Boolean {
+        // 下载模型zip
+        Log.d(TAG, "Downloading model from $downloadUrl")
+        val url = URL(downloadUrl)
+        val connection = url.openConnection()
+        connection.connectTimeout = 30000
+        connection.readTimeout = 120000
+        connection.connect()
+        val fileLength = connection.contentLength
+        Log.d(TAG, "Model size: $fileLength bytes")
+
+        if (fileLength <= 0) {
+            // 有些服务器不返回content-length，放宽校验
+            Log.w(TAG, "无法获取文件大小，继续下载")
+        }
+
+        val input = connection.getInputStream()
+        val output = FileOutputStream(modelZipFile)
+
+        val data = ByteArray(8192)
+        var total: Long = 0
+        var count: Int
+        var lastProgress = -1
+
+        while (input.read(data).also { count = it } != -1) {
+            total += count.toLong()
+            output.write(data, 0, count)
+            if (fileLength > 0) {
+                val progress = ((total * 100) / fileLength).toInt()
+                if (progress != lastProgress) {
+                    lastProgress = progress
+                    _state.value = _state.value.copy(downloadProgress = progress)
+                }
+            } else {
+                // 未知大小时显示已下载的MB数
+                val mb = total / (1024 * 1024)
+                _state.value = _state.value.copy(downloadProgress = (mb.toInt() * 2).coerceAtMost(99))
+            }
+        }
+
+        output.flush()
+        output.close()
+        input.close()
+
+        Log.d(TAG, "Download complete, total: $total bytes")
+
+        // 基本验证：至少要大于10MB才合理
+        if (total < 10 * 1024 * 1024) {
+            throw Exception("下载文件太小(${total / 1024 / 1024}MB)，可能下载失败")
+        }
+
+        // 解压
+        Log.d(TAG, "Extracting model...")
+        unzip(modelZipFile, context.filesDir)
+
+        // 删除zip文件
+        modelZipFile.delete()
+
+        // 检查是否有嵌套目录，如果有则扁平化
+        fixNestedModelDir()
+
+        // 验证解压后的模型完整性
+        if (!verifyModelIntegrity()) {
+            throw Exception("模型文件不完整")
+        }
+
+        // 加载模型
+        Log.d(TAG, "Loading model...")
+        model = Model(modelDir.absolutePath)
+        _state.value = _state.value.copy(
+            isModelReady = true,
+            isModelDownloading = false,
+            modelExists = true,
+            error = null
+        )
+        Log.d(TAG, "Model ready!")
+        return true
+    }
+
+    private fun fixNestedModelDir() {
+        // 检查 modelDir 是否存在
+        if (!modelDir.exists() || !modelDir.isDirectory) {
+            // 查找是否有嵌套的同名目录
+            val parentDir = context.filesDir
+            val files = parentDir.listFiles() ?: return
+            for (file in files) {
+                if (file.isDirectory && file.name != MODEL_DIR_NAME) {
+                    // 检查这个目录里是否有模型文件
+                    val nestedModel = File(file, MODEL_DIR_NAME)
+                    if (nestedModel.exists() && nestedModel.isDirectory) {
+                        Log.d(TAG, "发现嵌套目录，正在扁平化: ${file.name}/$MODEL_DIR_NAME")
+                        // 移动到正确位置
+                        nestedModel.renameTo(modelDir)
+                        // 删除空的外层目录
+                        file.delete()
+                        return
+                    }
+                    // 也可能直接就是模型目录但名字不同
+                    val amDir = File(file, "am")
+                    val graphDir = File(file, "graph")
+                    if (amDir.exists() && graphDir.exists()) {
+                        Log.d(TAG, "发现模型目录但名称不对: ${file.name}，重命名为 $MODEL_DIR_NAME")
+                        file.renameTo(modelDir)
+                        return
+                    }
+                }
+            }
+        }
+    }
             } catch (e: Exception) {
                 Log.e(TAG, "downloadModel error", e)
                 clearCorruptedModel()
