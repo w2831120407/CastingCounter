@@ -181,6 +181,36 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
             currentList.removeAt(0)
         }
         _efficiencyPoints.value = currentList
+        saveEfficiencyPoints()
+    }
+
+    private fun saveEfficiencyPoints() {
+        val points = _efficiencyPoints.value ?: emptyList()
+        if (points.isEmpty()) {
+            prefs.edit().remove("efficiencyPoints").apply()
+            return
+        }
+        // 格式: "hour1:eff1,hour2:eff2,..."
+        val dataStr = points.joinToString(",") { "${it.hour}:${it.piecesPerHour}" }
+        prefs.edit().putString("efficiencyPoints", dataStr).apply()
+    }
+
+    private fun loadEfficiencyPoints(): List<EfficiencyPoint> {
+        val dataStr = prefs.getString("efficiencyPoints", null) ?: return emptyList()
+        return try {
+            dataStr.split(",").mapNotNull { pointStr ->
+                val parts = pointStr.split(":")
+                if (parts.size == 2) {
+                    val hour = parts[0].toFloatOrNull()
+                    val eff = parts[1].toFloatOrNull()
+                    if (hour != null && eff != null) {
+                        EfficiencyPoint(hour, eff)
+                    } else null
+                } else null
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     private fun updateEstimates() {
@@ -240,6 +270,7 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun saveData() {
+        val today = getTodayString()
         prefs.edit().apply {
             putInt("taskCount", _taskCount.value ?: 0)
             putInt("piecesPerBox", _piecesPerBox.value ?: 0)
@@ -249,14 +280,20 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
             putInt("endHour", _endHour.value ?: 17)
             putInt("endMinute", _endMinute.value ?: 0)
             putBoolean("isNextDay", _isNextDay.value ?: false)
+            putLong("startTimeMillis", startTimeMillis)
+            putString("lastSaveDate", today)
             apply()
         }
+        saveEfficiencyPoints()
     }
 
     private fun loadData() {
+        val savedDate = prefs.getString("lastSaveDate", null)
+        val today = getTodayString()
+        val isSameDay = savedDate == today
+
         _taskCount.value = prefs.getInt("taskCount", 0)
         _piecesPerBox.value = prefs.getInt("piecesPerBox", 0)
-        _completedCount.value = prefs.getInt("completedCount", 0)
         _startHour.value = prefs.getInt("startHour", 8)
         _startMinute.value = prefs.getInt("startMinute", 0)
         _endHour.value = prefs.getInt("endHour", 17)
@@ -265,7 +302,33 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
 
         calculateBoxes()
 
-        // 设置开始时间
+        if (isSameDay) {
+            // 同一天，恢复已完成数量和数据点
+            _completedCount.value = prefs.getInt("completedCount", 0)
+            startTimeMillis = prefs.getLong("startTimeMillis", 0L)
+            _efficiencyPoints.value = loadEfficiencyPoints()
+
+            // 如果开始时间不合理，重新计算
+            if (startTimeMillis == 0L) {
+                startTimeMillis = calculateStartTimeMillis()
+            }
+        } else {
+            // 新的一天，重置计数和数据点
+            _completedCount.value = 0
+            startTimeMillis = calculateStartTimeMillis()
+            _efficiencyPoints.value = emptyList()
+        }
+
+        updateEfficiency()
+        updateEstimates()
+    }
+
+    private fun getTodayString(): String {
+        val cal = Calendar.getInstance()
+        return "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}-${cal.get(Calendar.DAY_OF_MONTH)}"
+    }
+
+    private fun calculateStartTimeMillis(): Long {
         val startCal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, _startHour.value ?: 8)
             set(Calendar.MINUTE, _startMinute.value ?: 0)
@@ -276,10 +339,7 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
         if (startCal.after(now)) {
             startCal.add(Calendar.DAY_OF_MONTH, -1)
         }
-        startTimeMillis = startCal.timeInMillis
-
-        updateEfficiency()
-        updateEstimates()
+        return startCal.timeInMillis
     }
 
     fun getWorkDurationHours(): Float {
