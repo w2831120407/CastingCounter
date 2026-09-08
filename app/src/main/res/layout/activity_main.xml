@@ -366,17 +366,149 @@
                         android:layout_marginStart="8dp"/>
                 </LinearLayout>
 
-                <!-- 语音按钮 -->
-                <Button
-                    android:id="@+id/btnVoiceInput"
+                <!-- 语音识别区域 -->
+                <LinearLayout
+                    android:id="@+id/layoutVoiceModelDownload"
                     android:layout_width="match_parent"
-                    android:layout_height="56dp"
-                    android:text="@string/voice_input"
-                    android:textSize="18sp"
-                    android:backgroundTint="@color/success"
-                    android:textColor="@android:color/white"
-                    android:drawableStart="@android:drawable/ic_btn_speak_now"
-                    android:drawablePadding="8dp"/>
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_voice_model"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tvModelStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/voice_model_needed"
+                        android:textSize="14sp"
+                        android:textColor="@color/text_secondary"
+                        android:gravity="center"
+                        android:layout_marginBottom="8dp"/>
+
+                    <ProgressBar
+                        android:id="@+id/progressModelDownload"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="6dp"
+                        android:max="100"
+                        android:progress="0"
+                        android:layout_marginBottom="8dp"/>
+
+                    <Button
+                        android:id="@+id/btnDownloadModel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/download_model"
+                        android:textSize="14sp"
+                        android:backgroundTint="@color/primary"
+                        android:textColor="@android:color/white"/>
+                </LinearLayout>
+
+                <!-- 语音按钮 - 按住说话 -->
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp">
+
+                    <!-- 音量可视化背景 -->
+                    <LinearLayout
+                        android:id="@+id/layoutVoiceVisualizer"
+                        android:layout_width="match_parent"
+                        android:layout_height="120dp"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="@drawable/bg_voice_listening"
+                        android:visibility="gone">
+
+                        <!-- 音量波形条 -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="60dp"
+                            android:orientation="horizontal"
+                            android:gravity="center"
+                            android:layout_marginBottom="8dp">
+
+                            <View
+                                android:id="@+id/voiceBar1"
+                                android:layout_width="4dp"
+                                android:layout_height="20dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                            <View
+                                android:id="@+id/voiceBar2"
+                                android:layout_width="4dp"
+                                android:layout_height="30dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                            <View
+                                android:id="@+id/voiceBar3"
+                                android:layout_width="4dp"
+                                android:layout_height="45dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                            <View
+                                android:id="@+id/voiceBar4"
+                                android:layout_width="4dp"
+                                android:layout_height="55dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                            <View
+                                android:id="@+id/voiceBar5"
+                                android:layout_width="4dp"
+                                android:layout_height="50dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                            <View
+                                android:id="@+id/voiceBar6"
+                                android:layout_width="4dp"
+                                android:layout_height="35dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                            <View
+                                android:id="@+id/voiceBar7"
+                                android:layout_width="4dp"
+                                android:layout_height="25dp"
+                                android:background="@color/white"
+                                android:layout_margin="2dp"/>
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvVoiceText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text=""
+                            android:textSize="16sp"
+                            android:textColor="@color/white"
+                            android:gravity="center"
+                            android:maxLines="1"
+                            android:ellipsize="end"/>
+
+                        <TextView
+                            android:id="@+id/tvReleaseHint"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/release_to_send"
+                            android:textSize="12sp"
+                            android:textColor="@color/white"
+                            android:gravity="center"
+                            android:layout_marginTop="4dp"/>
+                    </LinearLayout>
+
+                    <!-- 按住说话按钮 -->
+                    <Button
+                        android:id="@+id/btnVoiceInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:text="@string/hold_to_talk"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:backgroundTint="@color/success"
+                        android:textColor="@android:color/white"
+                        android:drawableStart="@android:drawable/ic_btn_speak_now"
+                        android:drawablePadding="8dp"/>
+                </RelativeLayout>
 
                 <TextView
                     android:id="@+id/tvVoiceHint"

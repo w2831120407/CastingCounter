@@ -1,36 +1,38 @@
 package com.castingcounter.app
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
+import android.view.MotionEvent
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.castingcounter.app.databinding.ActivityMainBinding
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.formatter.ValueFormatter
-import java.util.Locale
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.util.regex.Pattern
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewModel: CounterViewModel
-    private var speechRecognizer: SpeechRecognizer? = null
-    private var isListening = false
+    private lateinit var voiceRecognizer: VoiceRecognizerManager
+    private var isCancelled = false
+    private var startY = 0f
 
     companion object {
         private const val REQUEST_RECORD_AUDIO_PERMISSION = 100
+        private const val CANCEL_THRESHOLD = 100f // 上滑取消阈值
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,11 +41,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         viewModel = ViewModelProvider(this)[CounterViewModel::class.java]
+        voiceRecognizer = VoiceRecognizerManager(this)
 
         setupChart()
         setupObservers()
         setupClickListeners()
+        setupVoiceListeners()
         loadSavedValues()
+        checkVoiceModel()
     }
 
     private fun setupChart() {
@@ -73,7 +78,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             axisRight.isEnabled = false
-
             legend.isEnabled = false
         }
     }
@@ -120,6 +124,71 @@ class MainActivity : AppCompatActivity() {
         viewModel.isNextDay.observe(this) { binding.cbNextDay.isChecked = it }
     }
 
+    private fun setupVoiceListeners() {
+        lifecycleScope.launch {
+            voiceRecognizer.state.collectLatest { state ->
+                // 更新UI
+                binding.tvVoiceText.text = state.partialText.ifEmpty { state.finalText }
+                updateVoiceVolume(state.volume)
+
+                // 模型下载进度
+                if (state.isModelDownloading) {
+                    binding.layoutVoiceModelDownload.visibility = View.VISIBLE
+                    binding.progressModelDownload.progress = state.downloadProgress
+                    binding.tvModelStatus.text = getString(R.string.voice_model_downloading, state.downloadProgress)
+                    binding.btnDownloadModel.visibility = View.GONE
+                } else {
+                    binding.btnDownloadModel.visibility = View.VISIBLE
+                }
+
+                // 模型就绪状态
+                if (state.isModelReady) {
+                    binding.layoutVoiceModelDownload.visibility = View.GONE
+                    binding.btnVoiceInput.isEnabled = true
+                }
+
+                // 错误提示
+                state.error?.let { error ->
+                    Toast.makeText(this@MainActivity, error, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun updateVoiceVolume(volume: Int) {
+        // 根据音量更新波形条高度
+        val baseHeight = 15
+        val maxHeight = 55
+        val bars = listOf(
+            binding.voiceBar1,
+            binding.voiceBar2,
+            binding.voiceBar3,
+            binding.voiceBar4,
+            binding.voiceBar5,
+            binding.voiceBar6,
+            binding.voiceBar7
+        )
+
+        // 模拟波形效果，每个条有不同的随机因子
+        val factors = floatArrayOf(0.5f, 0.7f, 0.9f, 1f, 0.85f, 0.6f, 0.4f)
+        for (i in bars.indices) {
+            val barHeight = baseHeight + (volume * factors[i] * (maxHeight - baseHeight) / 100).toInt()
+            val layoutParams = bars[i].layoutParams
+            layoutParams.height = barHeight.coerceIn(baseHeight, maxHeight)
+            bars[i].layoutParams = layoutParams
+        }
+    }
+
+    private fun checkVoiceModel() {
+        lifecycleScope.launch {
+            val ready = voiceRecognizer.loadModel()
+            if (!ready) {
+                binding.layoutVoiceModelDownload.visibility = View.VISIBLE
+                binding.btnVoiceInput.isEnabled = false
+            }
+        }
+    }
+
     private fun loadSavedValues() {
         viewModel.taskCount.value?.let {
             if (it > 0) binding.etTaskCount.setText(it.toString())
@@ -151,9 +220,9 @@ class MainActivity : AppCompatActivity() {
 
         if (perBox > 0 && totalBoxes > 0) {
             binding.tvBoxResult.text = getString(R.string.box_calculation_result, perBox, totalBoxes)
-            binding.tvBoxResult.visibility = android.view.View.VISIBLE
+            binding.tvBoxResult.visibility = View.VISIBLE
         } else {
-            binding.tvBoxResult.visibility = android.view.View.GONE
+            binding.tvBoxResult.visibility = View.GONE
         }
     }
 
@@ -212,7 +281,6 @@ class MainActivity : AppCompatActivity() {
             val endM = binding.etEndMinute.text.toString().toIntOrNull() ?: 0
             val nextDay = binding.cbNextDay.isChecked
 
-            // 验证时间
             if (startH !in 0..23 || endH !in 0..23 || startM !in 0..59 || endM !in 0..59) {
                 Toast.makeText(this, "请输入有效的时间", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -244,9 +312,61 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 语音输入
-        binding.btnVoiceInput.setOnClickListener {
-            checkPermissionAndStartVoice()
+        // 下载语音模型
+        binding.btnDownloadModel.setOnClickListener {
+            lifecycleScope.launch {
+                val success = voiceRecognizer.downloadModel()
+                if (success) {
+                    Toast.makeText(this@MainActivity, "语音模型下载完成", Toast.LENGTH_SHORT).show()
+                    binding.layoutVoiceModelDownload.visibility = View.GONE
+                    binding.btnVoiceInput.isEnabled = true
+                }
+            }
+        }
+
+        // 语音按钮 - 按住说话
+        binding.btnVoiceInput.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    isCancelled = false
+                    startY = event.rawY
+                    checkPermissionAndStartVoice()
+                    binding.btnVoiceInput.text = getString(R.string.release_to_send)
+                    binding.layoutVoiceVisualizer.visibility = View.VISIBLE
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaY = startY - event.rawY
+                    if (deltaY > CANCEL_THRESHOLD && !isCancelled) {
+                        isCancelled = true
+                        binding.tvReleaseHint.text = getString(R.string.release_to_cancel)
+                        binding.tvReleaseHint.setTextColor(ContextCompat.getColor(this, R.color.error))
+                    } else if (deltaY <= CANCEL_THRESHOLD && isCancelled) {
+                        isCancelled = false
+                        binding.tvReleaseHint.text = getString(R.string.release_to_send)
+                        binding.tvReleaseHint.setTextColor(ContextCompat.getColor(this, android.R.color.white))
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val resultText = voiceRecognizer.stopListening()
+                    binding.layoutVoiceVisualizer.visibility = View.GONE
+                    binding.btnVoiceInput.text = getString(R.string.hold_to_talk)
+                    binding.tvReleaseHint.setTextColor(ContextCompat.getColor(this, android.R.color.white))
+
+                    if (!isCancelled && resultText.isNotEmpty()) {
+                        processVoiceResult(resultText)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    voiceRecognizer.stopListening()
+                    binding.layoutVoiceVisualizer.visibility = View.GONE
+                    binding.btnVoiceInput.text = getString(R.string.hold_to_talk)
+                    true
+                }
+                else -> false
+            }
         }
 
         // 重置
@@ -273,90 +393,23 @@ class MainActivity : AppCompatActivity() {
             )
             return
         }
-        startVoiceRecognition()
+
+        if (!voiceRecognizer.isModelReady()) {
+            Toast.makeText(this, R.string.voice_model_needed, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        voiceRecognizer.startListening()
     }
 
-    private fun startVoiceRecognition() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            Toast.makeText(this, R.string.voice_not_supported, Toast.LENGTH_SHORT).show()
-            return
+    private fun processVoiceResult(text: String) {
+        val pieces = parseVoiceInput(text)
+        if (pieces > 0) {
+            viewModel.addCompletedPieces(pieces)
+            Toast.makeText(this, "已添加 $pieces 件", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, R.string.no_number_detected, Toast.LENGTH_SHORT).show()
         }
-
-        if (isListening) {
-            speechRecognizer?.stopListening()
-            return
-        }
-
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                isListening = true
-                binding.btnVoiceInput.text = getString(R.string.listening)
-                binding.tvVoiceHint.text = getString(R.string.listening)
-            }
-
-            override fun onBeginningOfSpeech() {}
-
-            override fun onRmsChanged(rmsdB: Float) {}
-
-            override fun onBufferReceived(buffer: ByteArray?) {}
-
-            override fun onEndOfSpeech() {
-                isListening = false
-                binding.btnVoiceInput.text = getString(R.string.voice_input)
-                binding.tvVoiceHint.text = getString(R.string.voice_hint)
-            }
-
-            override fun onError(error: Int) {
-                isListening = false
-                binding.btnVoiceInput.text = getString(R.string.voice_input)
-                binding.tvVoiceHint.text = getString(R.string.voice_hint)
-                val errorMsg = when (error) {
-                    SpeechRecognizer.ERROR_AUDIO -> "音频错误"
-                    SpeechRecognizer.ERROR_CLIENT -> "客户端错误"
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "权限不足"
-                    SpeechRecognizer.ERROR_NETWORK -> "网络错误"
-                    SpeechRecognizer.ERROR_NO_MATCH -> "未识别到语音"
-                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别器忙"
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "语音超时"
-                    else -> "未知错误"
-                }
-                Toast.makeText(this@MainActivity, "语音识别错误: $errorMsg", Toast.LENGTH_SHORT).show()
-            }
-
-            override fun onResults(results: Bundle?) {
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    for (text in matches) {
-                        val pieces = parseVoiceInput(text)
-                        if (pieces > 0) {
-                            viewModel.addCompletedPieces(pieces)
-                            Toast.makeText(this@MainActivity, "已添加 $pieces 件", Toast.LENGTH_SHORT).show()
-                            return
-                        }
-                    }
-                    Toast.makeText(this@MainActivity, "未识别到数量，请说\"加XX件\"", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    binding.tvVoiceHint.text = matches[0]
-                }
-            }
-
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.CHINA.toString())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-        }
-
-        speechRecognizer?.startListening(intent)
     }
 
     private fun parseVoiceInput(text: String): Int {
@@ -368,6 +421,10 @@ class MainActivity : AppCompatActivity() {
             "增加(\\d+)",
             "添加(\\d+)件",
             "添加(\\d+)",
+            "加上(\\d+)件",
+            "加上(\\d+)",
+            "再加(\\d+)件",
+            "再加(\\d+)",
             "plus(\\d+)",
             "add(\\d+)",
             "(\\d+)件"
@@ -381,10 +438,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 尝试直接提取数字（如果文本中只有数字）
+        // 尝试直接提取数字（如果文本较短且包含数字）
         val numberPattern = Pattern.compile("\\d+")
         val matcher = numberPattern.matcher(text)
-        if (matcher.find() && text.length <= 10) {
+        if (matcher.find() && text.replace("\\D".toRegex(), "").length <= 5) {
             return matcher.group().toIntOrNull() ?: 0
         }
 
@@ -399,7 +456,9 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_RECORD_AUDIO_PERMISSION) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startVoiceRecognition()
+                if (voiceRecognizer.isModelReady()) {
+                    voiceRecognizer.startListening()
+                }
             } else {
                 Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_SHORT).show()
             }
@@ -408,7 +467,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        speechRecognizer?.destroy()
-        speechRecognizer = null
+        voiceRecognizer.destroy()
     }
 }

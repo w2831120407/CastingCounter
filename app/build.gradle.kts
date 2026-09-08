@@ -58,6 +58,13 @@ dependencies {
     // MPAndroidChart for line chart
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
 
+    // Vosk 离线语音识别
+    implementation("com.alphacephei:vosk-android:0.3.45")
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // OkHttp for model download
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
