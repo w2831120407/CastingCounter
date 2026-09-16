@@ -135,6 +135,7 @@ class MainActivity : AppCompatActivity() {
         viewModel.completedCount.observe(this) { count ->
             binding.tvCompletedCount.text = count.toString()
             updateProgress()
+            updateBoxResult()
         }
 
         viewModel.taskCount.observe(this) {
@@ -291,12 +292,28 @@ class MainActivity : AppCompatActivity() {
     private fun updateBoxResult() {
         val perBox = viewModel.piecesPerBox.value ?: 0
         val totalBoxes = viewModel.totalBoxes.value ?: 0
+        val completed = viewModel.completedCount.value ?: 0
+        val completedBoxes = viewModel.completedBoxes.value ?: 0
+        val remainingPieces = viewModel.remainingPieces.value ?: 0
 
         if (perBox > 0 && totalBoxes > 0) {
             binding.tvBoxResult.text = getString(R.string.box_calculation_result, perBox, totalBoxes)
             binding.tvBoxResult.visibility = View.VISIBLE
         } else {
             binding.tvBoxResult.visibility = View.GONE
+        }
+
+        // 显示已装箱数
+        if (perBox > 0 && completed > 0) {
+            val text = if (remainingPieces > 0) {
+                "已装了 ${completedBoxes} 箱又 ${remainingPieces} 个"
+            } else {
+                "已装了 ${completedBoxes} 箱"
+            }
+            binding.tvCompletedBoxes.text = text
+            binding.tvCompletedBoxes.visibility = View.VISIBLE
+        } else {
+            binding.tvCompletedBoxes.visibility = View.GONE
         }
     }
 

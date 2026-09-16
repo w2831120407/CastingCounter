@@ -248,6 +248,16 @@
                     android:textColor="@color/success"
                     android:textStyle="bold"
                     android:visibility="gone"/>
+
+                <TextView
+                    android:id="@+id/tvCompletedBoxes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="15sp"
+                    android:textColor="@color/primary"
+                    android:textStyle="bold"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone"/>
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 

@@ -33,6 +33,13 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
     private val _totalBoxes = MutableLiveData(0)
     val totalBoxes: LiveData<Int> = _totalBoxes
 
+    // 已装箱数和零头
+    private val _completedBoxes = MutableLiveData(0)
+    val completedBoxes: LiveData<Int> = _completedBoxes
+
+    private val _remainingPieces = MutableLiveData(0)
+    val remainingPieces: LiveData<Int> = _remainingPieces
+
     // 已完成件数
     private val _completedCount = MutableLiveData(0)
     val completedCount: LiveData<Int> = _completedCount
@@ -96,12 +103,27 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
         } else {
             _totalBoxes.value = 0
         }
+        // 每箱件数变化时，重新计算已装箱数
+        calculateCompletedBoxes()
+    }
+
+    private fun calculateCompletedBoxes() {
+        val completed = _completedCount.value ?: 0
+        val perBox = _piecesPerBox.value ?: 0
+        if (completed > 0 && perBox > 0) {
+            _completedBoxes.value = completed / perBox
+            _remainingPieces.value = completed % perBox
+        } else {
+            _completedBoxes.value = 0
+            _remainingPieces.value = 0
+        }
     }
 
     fun addCompletedPieces(pieces: Int) {
         val current = _completedCount.value ?: 0
         val newCount = current + pieces
         _completedCount.value = newCount
+        calculateCompletedBoxes()
         addEfficiencyDataPoint()
         updateEstimates()
         saveData()
@@ -256,6 +278,7 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
         _efficiency.value = 0f
         _estimatedCompletion.value = "--"
         _estimatedDuration.value = "--"
+        calculateCompletedBoxes()
 
         // 重置开始时间为今天的上班时间
         val startCal = Calendar.getInstance().apply {
@@ -319,6 +342,8 @@ class CounterViewModel(application: Application) : AndroidViewModel(application)
             _efficiencyPoints.value = emptyList()
         }
 
+        // 加载完数据后计算已装箱数
+        calculateCompletedBoxes()
         updateEfficiency()
         updateEstimates()
     }
