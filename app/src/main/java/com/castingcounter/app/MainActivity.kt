@@ -303,12 +303,12 @@ class MainActivity : AppCompatActivity() {
             binding.tvBoxResult.visibility = View.GONE
         }
 
-        // 显示已装箱数
+        // 显示已装箱数（商=已装箱数，余数=未装箱数）
         if (perBox > 0 && completed > 0) {
             val text = if (remainingPieces > 0) {
-                "已装了 ${completedBoxes} 箱又 ${remainingPieces} 个"
+                "已装 ${completedBoxes} 箱，未装箱 ${remainingPieces} 个"
             } else {
-                "已装了 ${completedBoxes} 箱"
+                "已装 ${completedBoxes} 箱，未装箱 0 个"
             }
             binding.tvCompletedBoxes.text = text
             binding.tvCompletedBoxes.visibility = View.VISIBLE
